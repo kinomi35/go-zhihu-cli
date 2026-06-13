@@ -1,0 +1,9 @@
+{
+  "base_url": "https://www.zhihu.com",
+  "api_v3": "https://www.zhihu.com/api/v3",
+  "api_v4": "https://www.zhihu.com/api/v4",
+  "me_url": "https://www.zhihu.com/api/v4/me",
+  "feed_recommend_url": "https://www.zhihu.com/api/v3/feed/topstory/recommend",
+  "answer_url_template": "https://www.zhihu.com/api/v4/answers/%s",
+  "answer_comments_url_template": "https://www.zhihu.com/api/v4/answers/%s/comments"
+}
