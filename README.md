@@ -1,6 +1,6 @@
 # go-zhihu-cli
 
-一个基于 Cobra 的知乎命令行工具，参考了上级目录里的 Python `zhihu-cli` 项目。
+一个基于 Cobra 的知乎命令行工具，参考了  `pyzhihu-cli` 项目。
 
 当前支持：
 
@@ -59,5 +59,3 @@ configs/endpoints.json
 ```bash
 ./zhihu --endpoints ./configs/endpoints.json feed
 ```
-
-这样接口地址变化时，不需要改命令实现代码。
