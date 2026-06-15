@@ -41,6 +41,7 @@ func Execute() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(feedCmd)
 	rootCmd.AddCommand(readCmd)
+	rootCmd.AddCommand(tuiCmd)
 	localizeCobra(rootCmd)
 
 	if err := rootCmd.Execute(); err != nil {
