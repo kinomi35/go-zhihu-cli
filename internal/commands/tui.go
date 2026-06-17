@@ -19,8 +19,8 @@ import (
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui [选项]",
-	Short: "使用tui界面展示",
-	Args:  cobra.NoArgs, // 修复1：替换成官方无参数校验
+	Short: "使用tui界面",
+	Args:  cobra.NoArgs, 
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cookies, err := auth.LoadCookieMap()
 		if err != nil {
@@ -31,10 +31,9 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 		p := tea.NewProgram(initialModel(zhihu), tea.WithAltScreen())
-		// 修复2：直接返回错误，去掉多余os.Exit
 		_, err = p.Run()
 		if err != nil {
-			fmt.Printf("程序运行出错: %v\n", err) // 修复6：加换行
+			fmt.Printf("程序运行出错: %v\n", err) 
 		}
 		return err
 	},
@@ -46,6 +45,7 @@ type page int
 const (
 	pageList page = iota
 	pageDetail
+	commentDetail
 )
 
 // 列表条目数据
@@ -53,7 +53,7 @@ type item struct {
 	id          string // 唯一标识，用来匹配对应的详情内容
 	title       string // 列表标题
 	desc        string // 列表小字描述
-	articletype string // 可选：内容类型（如文章/问题/回答），用于详情页展示
+	articletype string // 内容类型（如文章/问题/回答）
 }
 
 func (i item) Title() string       { return i.title }
@@ -143,7 +143,7 @@ type detailData struct {
 	text        string // 主体详情大文本
 	thumbsUpNum int    // 点赞数
 	commentNum  int    // 评论数
-	comment     string // 可选：评论内容，展开时展示
+	comment     string // 评论内容，展开时展示
 
 }
 
@@ -156,7 +156,6 @@ type model struct {
 	detail       *detailData // 懒加载出来的详情（nil=未加载）
 	loading      bool        // 是否正在加载（true显示加载提示）
 	listLoading  bool        // 列表刷新加载状态
-	showComment  bool        // 评论展开/收起开关
 	viewport     viewport.Model
 }
 
@@ -282,7 +281,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.detail != nil {
 			m.detail.comment = msg.comment
 		}
-		m.syncDetailViewport()
+		m.syncCommentViewport()
 		return m, nil
 
 	// 刷新列表完成回调消息
@@ -304,7 +303,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedItem = nil
 				m.detail = nil
 				m.loading = false
-				m.showComment = false
+	
 				m.syncDetailViewport()
 				return m, nil
 			}
@@ -316,7 +315,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedItem = nil
 				m.detail = nil
 				m.loading = false
-				m.showComment = false
+				m.syncDetailViewport()
+			}
+			if m.page == commentDetail {
+				m.page = pageDetail
 				m.syncDetailViewport()
 			}
 			return m, nil
@@ -324,9 +326,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// c 切换评论（仅加载完成后生效）
 		case "c":
 			if m.page == pageDetail && !m.loading && m.detail != nil {
-				m.showComment = !m.showComment
-				m.syncDetailViewport()
-				if m.showComment && m.detail.comment == "" && m.selectedItem != nil {
+				m.page = commentDetail
+				m.syncCommentViewport()
+				if  m.detail.comment == "" && m.selectedItem != nil {
 					return m, loadComments(m.zhihu, m.selectedItem.id)
 				}
 			}
@@ -349,7 +351,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedItem = &sel
 					m.page = pageDetail
 					m.loading = true
-					m.showComment = false
 					// 发起加载指令
 					return m, loadDetailContent(m.zhihu, m.selectedItem.id)
 				}
@@ -361,6 +362,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetSize(msg.Width-4, msg.Height-6)
 		m.setDetailViewportSize(msg.Width, msg.Height)
 		m.syncDetailViewport()
+		m.syncCommentViewport()
 		return m, nil
 	}
 
@@ -397,9 +399,16 @@ func (m model) View() string {
 		if m.detail == nil {
 			return style.Render("详情加载失败\n\n[z] 返回列表")
 		}
-		tips := "\n[c] 展开/收起评论 | [↑/↓] 滚动 | [z] 返回列表 | [q] 退出"
+		tips := "\n[c] 展开评论 | [↑/↓] 滚动 | [z] 返回列表 | [q] 退出"
 		return style.Render(m.viewport.View() + tips)
 
+	case commentDetail:
+		style := lipgloss.NewStyle().Padding(2)
+		if m.detail == nil {
+			return style.Render("评论加载失败\n\n[z] 返回详情")
+		}
+		tips := "\n[z] 返回详情 | [q] 退出"
+		return style.Render(m.viewport.View() + tips)
 	default:
 		return ""
 	}
@@ -411,6 +420,14 @@ func (m *model) syncDetailViewport() {
 		return
 	}
 	m.viewport.SetContent(m.renderDetailContent())
+}
+
+func (m *model) syncCommentViewport() {
+	if m.detail == nil {
+		m.viewport.SetContent("")
+		return
+	}
+	m.viewport.SetContent(m.renderCommentContent())
 }
 
 func (m *model) setDetailViewportSize(width, height int) {
@@ -434,13 +451,18 @@ func (m model) renderDetailContent() string {
 		"\n\n" + thumbsUpStyle.Render(fmt.Sprintf("赞同: %d", m.detail.thumbsUpNum)) +
 		"  " + commentStyle.Render(fmt.Sprintf("评论: %d", m.detail.commentNum))
 
-	if m.showComment {
+	return content
+}
+func (m model) renderCommentContent() string {
+	if m.detail.comment == "" {
+		return "暂无评论"
+	}
+	var content string
 		comment := m.detail.comment
 		if comment == "" {
 			comment = "正在加载评论..."
 		}
-		content += "\n\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Render("评论内容:\n"+comment)
-	}
+		content = lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Render("评论内容:\n"+comment)
 
 	return content
 }
