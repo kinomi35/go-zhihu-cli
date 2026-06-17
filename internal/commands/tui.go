@@ -17,10 +17,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const tuiCommentLimit = 100
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui [选项]",
 	Short: "使用tui界面",
-	Args:  cobra.NoArgs, 
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cookies, err := auth.LoadCookieMap()
 		if err != nil {
@@ -33,7 +35,7 @@ var tuiCmd = &cobra.Command{
 		p := tea.NewProgram(initialModel(zhihu), tea.WithAltScreen())
 		_, err = p.Run()
 		if err != nil {
-			fmt.Printf("程序运行出错: %v\n", err) 
+			fmt.Printf("程序运行出错: %v\n", err)
 		}
 		return err
 	},
@@ -223,7 +225,7 @@ func loadDetailContent(zhihu *client.Client, itemID string) tea.Cmd {
 
 func loadComments(zhihu *client.Client, answerID string) tea.Cmd {
 	return func() tea.Msg {
-		comments, err := zhihu.AnswerComments(answerID, 100)
+		comments, err := zhihu.AnswerComments(answerID, tuiCommentLimit)
 		if err != nil {
 			return errMsg{err: err}
 		}
@@ -234,6 +236,9 @@ func loadComments(zhihu *client.Client, answerID string) tea.Cmd {
 				author = comment.Author.Name
 			}
 			commentText += fmt.Sprintf("%s: %s\n", author, output.StripHTMLPreserveLines(comment.Content))
+		}
+		if commentText == "" {
+			commentText = "暂无评论"
 		}
 		return loadCommentsMsg{comment: commentText}
 	}
@@ -251,7 +256,7 @@ func initialModel(zhihu *client.Client) model {
 		list:     l,
 		zhihu:    zhihu,
 		viewport: vp,
-		// selectedItem/detail/loading/showComment 默认零值：nil/false
+		// selectedItem/detail/loading 默认零值：nil/false
 	}
 }
 
@@ -267,21 +272,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		errorText := fmt.Sprintf("加载出错: %v", msg.err)
 		m.detail = &detailData{text: errorText}
-		m.syncDetailViewport()
+		m.syncDetailViewport(true)
 		return m, nil
 	// 加载完成回调消息
 	case loadDetailMsg:
 		m.loading = false
 
 		m.detail = &msg.data
-		m.syncDetailViewport()
+		m.syncDetailViewport(true)
 		return m, nil
 
 	case loadCommentsMsg:
 		if m.detail != nil {
 			m.detail.comment = msg.comment
 		}
-		m.syncCommentViewport()
+		m.syncCommentViewport(true)
 		return m, nil
 
 	// 刷新列表完成回调消息
@@ -298,28 +303,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, tea.Quit
 		case "esc":
+			if m.page == commentDetail {
+				m.page = pageDetail
+				m.syncDetailViewport(true)
+				return m, nil
+			}
 			if m.page == pageDetail {
 				m.page = pageList
 				m.selectedItem = nil
 				m.detail = nil
 				m.loading = false
-	
-				m.syncDetailViewport()
+
+				m.syncDetailViewport(true)
 				return m, nil
 			}
 
-		// z 返回列表，清空详情、加载状态、评论开关
+		// z 返回上一页
 		case "z":
 			if m.page == pageDetail {
 				m.page = pageList
 				m.selectedItem = nil
 				m.detail = nil
 				m.loading = false
-				m.syncDetailViewport()
+				m.syncDetailViewport(true)
 			}
 			if m.page == commentDetail {
 				m.page = pageDetail
-				m.syncDetailViewport()
+				m.syncDetailViewport(true)
 			}
 			return m, nil
 
@@ -327,8 +337,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if m.page == pageDetail && !m.loading && m.detail != nil {
 				m.page = commentDetail
-				m.syncCommentViewport()
-				if  m.detail.comment == "" && m.selectedItem != nil {
+				m.syncCommentViewport(true)
+				if m.detail.comment == "" && m.selectedItem != nil {
 					return m, loadComments(m.zhihu, m.selectedItem.id)
 				}
 			}
@@ -361,12 +371,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.list.SetSize(msg.Width-4, msg.Height-6)
 		m.setDetailViewportSize(msg.Width, msg.Height)
-		m.syncDetailViewport()
-		m.syncCommentViewport()
+		if m.page == pageDetail {
+			m.syncDetailViewport(false)
+		}
+		if m.page == commentDetail {
+			m.syncCommentViewport(false)
+		}
 		return m, nil
 	}
 
-	if m.page == pageDetail && !m.loading && m.detail != nil {
+	if (m.page == pageDetail || m.page == commentDetail) && !m.loading && m.detail != nil {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
@@ -407,27 +421,39 @@ func (m model) View() string {
 		if m.detail == nil {
 			return style.Render("评论加载失败\n\n[z] 返回详情")
 		}
-		tips := "\n[z] 返回详情 | [q] 退出"
+		tips := "\n[↑/↓] 滚动 | [z] 返回详情 | [q] 退出"
 		return style.Render(m.viewport.View() + tips)
 	default:
 		return ""
 	}
 }
 
-func (m *model) syncDetailViewport() {
+func (m *model) syncDetailViewport(gotoTop bool) {
 	if m.detail == nil {
 		m.viewport.SetContent("")
+		if gotoTop {
+			m.viewport.GotoTop()
+		}
 		return
 	}
 	m.viewport.SetContent(m.renderDetailContent())
+	if gotoTop {
+		m.viewport.GotoTop()
+	}
 }
 
-func (m *model) syncCommentViewport() {
+func (m *model) syncCommentViewport(gotoTop bool) {
 	if m.detail == nil {
 		m.viewport.SetContent("")
+		if gotoTop {
+			m.viewport.GotoTop()
+		}
 		return
 	}
 	m.viewport.SetContent(m.renderCommentContent())
+	if gotoTop {
+		m.viewport.GotoTop()
+	}
 }
 
 func (m *model) setDetailViewportSize(width, height int) {
@@ -454,15 +480,9 @@ func (m model) renderDetailContent() string {
 	return content
 }
 func (m model) renderCommentContent() string {
-	if m.detail.comment == "" {
-		return "暂无评论"
+	comment := m.detail.comment
+	if comment == "" {
+		comment = "正在加载评论..."
 	}
-	var content string
-		comment := m.detail.comment
-		if comment == "" {
-			comment = "正在加载评论..."
-		}
-		content = lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Render("评论内容:\n"+comment)
-
-	return content
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Render("评论内容:\n" + comment)
 }
